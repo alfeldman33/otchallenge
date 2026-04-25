@@ -331,8 +331,8 @@ if run:
     with tab_fullgame:
         st.subheader("Full Game Scorer Probabilities")
         st.caption(
-            "P(score) uses a Poisson model on expected goals (xG) per game from MoneyPuck. "
-            "Based on current-season playoff data, with regular season as fallback."
+            "P(score) uses a Poisson model on xG per game from MoneyPuck (current playoff season, "
+            "regular season as fallback). Enter DraftKings odds below to highlight value plays."
         )
 
         fg = feat.build_fullgame_probabilities(
@@ -345,6 +345,28 @@ if run:
         if fg.empty:
             st.warning("No full-game probability data available for these teams.")
         else:
+            # ---- DraftKings odds input -----------------------------------
+            with st.expander("Enter DraftKings anytime goal scorer odds (optional)", expanded=False):
+                st.caption("Enter American odds (e.g. +150, -110). Leave blank to skip.")
+                dk_odds = {}
+                all_players = fg[fg["rank"] <= top_n]["name"].tolist()
+                dk_cols = st.columns(2)
+                for j, player in enumerate(all_players):
+                    with dk_cols[j % 2]:
+                        val = st.text_input(player, key=f"dk_{player}", placeholder="+150")
+                        if val.strip():
+                            dk_odds[player] = val.strip()
+
+            def american_to_implied(odds_str: str) -> float:
+                try:
+                    o = int(odds_str.replace(" ", ""))
+                    if o > 0:
+                        return 100 / (o + 100)
+                    else:
+                        return abs(o) / (abs(o) + 100)
+                except Exception:
+                    return None
+
             fg_cols = st.columns(len(teams))
             for i, team in enumerate(teams):
                 with fg_cols[i]:
@@ -354,13 +376,40 @@ if run:
                         "#": team_fg["rank"],
                         "Player": team_fg["name"],
                         "Pos": team_fg["position"],
-                        "P(score)": team_fg["p_score"].map("{:.1f}%".format),
+                        "Model P%": team_fg["p_score"].map("{:.1f}%".format),
                         "xG/game": team_fg["xg_per_game"].map("{:.3f}".format),
                         "Goals": team_fg["goals"].astype(int),
                         "GP": team_fg["games_played"].astype(int),
                     }
-                    st.markdown(f"**{team}**")
-                    st.dataframe(pd.DataFrame(display), hide_index=True, use_container_width=True)
+                    if dk_odds:
+                        implied = []
+                        value = []
+                        for _, row in team_fg.iterrows():
+                            imp = american_to_implied(dk_odds.get(row["name"], ""))
+                            if imp is not None:
+                                implied.append(f"{imp*100:.1f}%")
+                                edge = row["p_score"] / 100 - imp
+                                value.append(f"+{edge*100:.1f}%" if edge > 0 else f"{edge*100:.1f}%")
+                            else:
+                                implied.append("—")
+                                value.append("—")
+                        display["DK Implied%"] = implied
+                        display["Edge"] = value
+
+                    df_display = pd.DataFrame(display)
+
+                    if dk_odds:
+                        def highlight_value(row):
+                            edge = row.get("Edge", "—")
+                            if isinstance(edge, str) and edge.startswith("+"):
+                                return ["background-color: #1a3a1a"] * len(row)
+                            return [""] * len(row)
+                        st.markdown(f"**{team}**")
+                        st.dataframe(df_display.style.apply(highlight_value, axis=1),
+                                     hide_index=True, use_container_width=True)
+                    else:
+                        st.markdown(f"**{team}**")
+                        st.dataframe(df_display, hide_index=True, use_container_width=True)
 
     # Store top 3 per team in session state for logging
     st.session_state["last_game_id"] = game_id

@@ -60,6 +60,8 @@ def load_moneypuck_history(seasons: list[int]) -> pd.DataFrame:
                 df = fetch_moneypuck_skaters(season, gtype)
                 df["season"] = season
                 df["game_type"] = gtype
+                if "situation" in df.columns:
+                    df = df[df["situation"] == "all"]
                 frames.append(df)
             except Exception as e:
                 print(f"  [warn] Could not fetch {season} {gtype}: {e}")
