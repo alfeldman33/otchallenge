@@ -58,9 +58,8 @@ def build_player_features(
     if weights is None:
         weights = DEFAULT_WEIGHTS
 
-    # ---- 0. Rename shots -> shots_in_game for clarity -------------------
-    # ---- 1. Current-season playoff stats --------------------------------
-    in_game = in_game.copy()
+    # ---- 0. Dedupe in_game and rename shots -> shots_in_game ------------
+    in_game = in_game.copy().drop_duplicates(subset="playerId")
     if "shots" in in_game.columns and "shots_in_game" not in in_game.columns:
         in_game = in_game.rename(columns={"shots": "shots_in_game"})
 
@@ -69,6 +68,8 @@ def build_player_features(
 
     # ---- 2. Career playoff stats (all seasons loaded) -------------------
     all_po = mp_history[mp_history["game_type"] == "playoffs"].copy()
+    if "situation" in all_po.columns:
+        all_po = all_po[all_po["situation"] == "all"]
     career_po = (
         all_po.groupby("playerId", as_index=False)
         .agg(
@@ -245,7 +246,10 @@ def build_fullgame_probabilities(
 # ---------------------------------------------------------------------------
 
 def _filter(df: pd.DataFrame, season: int, game_type: str) -> pd.DataFrame:
-    return df[(df["season"] == season) & (df["game_type"] == game_type)].copy()
+    result = df[(df["season"] == season) & (df["game_type"] == game_type)].copy()
+    if "situation" in result.columns:
+        result = result[result["situation"] == "all"]
+    return result.drop_duplicates(subset="playerId")
 
 
 def _add_per60(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
