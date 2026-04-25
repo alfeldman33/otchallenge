@@ -169,7 +169,6 @@ mode = st.radio(
     horizontal=True,
 )
 
-game_id = None
 in_game = None
 goalie_stats = None
 series_stats = None
@@ -180,22 +179,26 @@ if mode == "Auto-detect today's games":
     if st.button("Find today's playoff games"):
         with st.spinner("Checking NHL schedule..."):
             games = fetch_data.fetch_todays_playoff_games()
-
         if not games:
             st.warning("No playoff games found today.")
+            st.session_state.pop("today_games", None)
         else:
-            options = {
-                f"{g.get('awayTeam',{}).get('abbrev','?')} @ "
-                f"{g.get('homeTeam',{}).get('abbrev','?')}  (ID: {g['id']})": g["id"]
-                for g in games
-            }
-            choice = st.selectbox("Pick a game", list(options.keys()))
-            game_id = options[choice]
+            st.session_state["today_games"] = games
+
+    if "today_games" in st.session_state:
+        games = st.session_state["today_games"]
+        options = {
+            f"{g.get('awayTeam',{}).get('abbrev','?')} @ "
+            f"{g.get('homeTeam',{}).get('abbrev','?')}  (ID: {g['id']})": g["id"]
+            for g in games
+        }
+        choice = st.selectbox("Pick a game", list(options.keys()))
+        st.session_state["selected_game_id"] = options[choice]
 
 elif mode == "Enter game ID":
     gid_str = st.text_input("NHL game ID", placeholder="e.g. 2024030411")
     if gid_str.strip().isdigit():
-        game_id = int(gid_str.strip())
+        st.session_state["selected_game_id"] = int(gid_str.strip())
 
 elif mode == "Enter team abbreviations":
     col1, col2 = st.columns(2)
@@ -203,6 +206,8 @@ elif mode == "Enter team abbreviations":
         away = st.text_input("Away team", placeholder="FLA").upper().strip()
     with col2:
         home = st.text_input("Home team", placeholder="EDM").upper().strip()
+
+game_id = st.session_state.get("selected_game_id") if mode != "Enter team abbreviations" else None
 
 # ---------------------------------------------------------------------------
 # Run prediction
