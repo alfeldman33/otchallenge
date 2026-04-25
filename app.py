@@ -235,8 +235,20 @@ if run:
             st.stop()
 
     if in_game is None or in_game.empty:
-        st.error("No player data found. Check the game ID or team abbreviations.")
-        st.stop()
+        if game_id:
+            # Game likely hasn't started yet — fall back to season stats
+            st.info("Live player data not available yet (game may not have started). Using season stats instead.")
+            bs = fetch_data.fetch_boxscore(game_id)
+            away_abbrev = bs.get("awayTeam", {}).get("abbrev", "")
+            home_abbrev = bs.get("homeTeam", {}).get("abbrev", "")
+            if away_abbrev and home_abbrev:
+                in_game = _build_season_only_ingame(mp, [away_abbrev, home_abbrev], CURRENT_SEASON)
+            if in_game is None or in_game.empty:
+                st.error("Could not build roster. Try 'Enter team abbreviations' manually.")
+                st.stop()
+        else:
+            st.error("No player data found. Check the game ID or team abbreviations.")
+            st.stop()
 
     with st.spinner("Scoring players..."):
         ranked = feat.build_player_features(
