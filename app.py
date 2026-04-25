@@ -68,7 +68,23 @@ def load_history(seasons: tuple[int, ...]) -> pd.DataFrame:
     return fetch_data.load_moneypuck_history(list(seasons))
 
 
-mp = load_history(tuple(sorted(seasons)))
+try:
+    mp = load_history(tuple(sorted(seasons)))
+except Exception as e:
+    st.error(
+        f"Could not load MoneyPuck data: {e}\n\n"
+        "MoneyPuck may be temporarily unavailable. Try again in a few minutes, "
+        "or adjust the selected seasons in the sidebar."
+    )
+    st.stop()
+
+if mp.empty:
+    st.error(
+        "No data was returned from MoneyPuck for the selected seasons. "
+        "This can happen if the site is blocking automated requests from cloud servers. "
+        "Try removing older seasons from the sidebar, or try again later."
+    )
+    st.stop()
 
 # ---------------------------------------------------------------------------
 # Game selection
@@ -187,35 +203,74 @@ if run:
         _, game_num = fetch_data.get_series_game_ids(game_id)
         st.info(f"Series stats included — data from {game_num - 1} prior game(s) in this matchup.")
 
-    # ---- Player rankings -------------------------------------------------
-    st.subheader("Player rankings")
-    cols = st.columns(len(teams))
+    # ---- Tabs ------------------------------------------------------------
+    tab_ot, tab_fullgame = st.tabs(["OT Scorer Predictor", "Full Game Scorer"])
 
-    for i, team in enumerate(teams):
-        with cols[i]:
-            team_df = ranked[ranked["teamAbbrev"] == team].copy()
-            team_df = team_df[team_df["rank"] <= top_n]
+    # ---- Tab 1: OT Scorer ------------------------------------------------
+    with tab_ot:
+        st.subheader("Player rankings — OT")
+        cols = st.columns(len(teams))
 
-            display_cols = {
-                "#": team_df["rank"],
-                "Player": team_df["name"],
-                "Pos": team_df["position"],
-                "Score": team_df["score"].map("{:.3f}".format),
-                "SOG (game)": team_df["shots_in_game"].astype(int),
-                "xG/60 (cur PO)": team_df["xg_per60_current_playoffs"].map("{:.2f}".format),
-            }
-            if has_series:
-                display_cols["SOG/G (series)"] = team_df["shots_per_game_series"].map("{:.1f}".format)
-            display_cols["xG/60 (career PO)"] = team_df["xg_per60_career_playoffs"].map("{:.2f}".format)
-            display_cols["PO GP"] = team_df["cur_po_gp"].astype(int)
+        for i, team in enumerate(teams):
+            with cols[i]:
+                team_df = ranked[ranked["teamAbbrev"] == team].copy()
+                team_df = team_df[team_df["rank"] <= top_n]
 
-            st.markdown(f"**{team}**")
-            st.dataframe(pd.DataFrame(display_cols), hide_index=True, use_container_width=True)
+                display_cols = {
+                    "#": team_df["rank"],
+                    "Player": team_df["name"],
+                    "Pos": team_df["position"],
+                    "Score": team_df["score"].map("{:.3f}".format),
+                    "SOG (game)": team_df["shots_in_game"].astype(int),
+                    "xG/60 (cur PO)": team_df["xg_per60_current_playoffs"].map("{:.2f}".format),
+                }
+                if has_series:
+                    display_cols["SOG/G (series)"] = team_df["shots_per_game_series"].map("{:.1f}".format)
+                display_cols["xG/60 (career PO)"] = team_df["xg_per60_career_playoffs"].map("{:.2f}".format)
+                display_cols["PO GP"] = team_df["cur_po_gp"].astype(int)
 
-    st.caption(
-        "Score is a weighted composite normalized 0–1 per team. "
-        "Top pick is the model's best candidate, not a guarantee."
-    )
+                st.markdown(f"**{team}**")
+                st.dataframe(pd.DataFrame(display_cols), hide_index=True, use_container_width=True)
+
+        st.caption(
+            "Score is a weighted composite normalized 0-1 per team. "
+            "Top pick is the model's best candidate, not a guarantee."
+        )
+
+    # ---- Tab 2: Full Game Scorer -----------------------------------------
+    with tab_fullgame:
+        st.subheader("Full Game Scorer Probabilities")
+        st.caption(
+            "P(score) uses a Poisson model on expected goals (xG) per game from MoneyPuck. "
+            "Based on current-season playoff data, with regular season as fallback."
+        )
+
+        fg = feat.build_fullgame_probabilities(
+            mp_history=mp,
+            teams=teams,
+            current_season=CURRENT_SEASON,
+            top_n=top_n,
+        )
+
+        if fg.empty:
+            st.warning("No full-game probability data available for these teams.")
+        else:
+            fg_cols = st.columns(len(teams))
+            for i, team in enumerate(teams):
+                with fg_cols[i]:
+                    team_fg = fg[fg["teamAbbrev"] == team].copy()
+                    team_fg = team_fg[team_fg["rank"] <= top_n]
+                    display = {
+                        "#": team_fg["rank"],
+                        "Player": team_fg["name"],
+                        "Pos": team_fg["position"],
+                        "P(score)": team_fg["p_score"].map("{:.1f}%".format),
+                        "xG/game": team_fg["xg_per_game"].map("{:.3f}".format),
+                        "Goals": team_fg["goals"].astype(int),
+                        "GP": team_fg["games_played"].astype(int),
+                    }
+                    st.markdown(f"**{team}**")
+                    st.dataframe(pd.DataFrame(display), hide_index=True, use_container_width=True)
 
     # Store top 3 per team in session state for logging
     st.session_state["last_game_id"] = game_id

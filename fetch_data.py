@@ -53,6 +53,8 @@ def load_moneypuck_history(seasons: list[int]) -> pd.DataFrame:
                 frames.append(df)
             except Exception as e:
                 print(f"  [warn] Could not fetch {season} {gtype}: {e}")
+    if not frames:
+        return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)
 
 

@@ -58,7 +58,12 @@ def build_player_features(
     if weights is None:
         weights = DEFAULT_WEIGHTS
 
+    # ---- 0. Rename shots -> shots_in_game for clarity -------------------
     # ---- 1. Current-season playoff stats --------------------------------
+    in_game = in_game.copy()
+    if "shots" in in_game.columns and "shots_in_game" not in in_game.columns:
+        in_game = in_game.rename(columns={"shots": "shots_in_game"})
+
     cur_po = _filter(mp_history, season=current_season, game_type="playoffs")
     cur_po = _add_per60(cur_po, prefix="cur_po")
 
@@ -169,6 +174,70 @@ def build_player_features(
         "cur_po_gp", "career_po_gp",
     ]
     return df[output_cols].sort_values(["teamAbbrev", "rank"]).reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Full-game scoring probabilities (Poisson on xG)
+# ---------------------------------------------------------------------------
+
+def build_fullgame_probabilities(
+    mp_history: pd.DataFrame,
+    teams: list,
+    current_season: int,
+    top_n: int = 10,
+) -> pd.DataFrame:
+    """
+    For each skater on the given teams, estimate P(score >= 1 goal in this game)
+    using a Poisson model: P = 1 - exp(-xg_per_game).
+
+    xg_per_game is taken from current-season playoffs first, then regular season
+    as a fallback for players with no playoff sample.
+
+    Returns a DataFrame with columns:
+        rank, name, teamAbbrev, position, p_score (%), xg_per_game, games_played, goals
+    sorted best-first within each team.
+    """
+    import math
+
+    if mp_history.empty or "team" not in mp_history.columns:
+        return pd.DataFrame()
+
+    po = mp_history[
+        (mp_history["season"] == current_season) & (mp_history["game_type"] == "playoffs")
+    ].copy()
+    reg = mp_history[
+        (mp_history["season"] == current_season) & (mp_history["game_type"] == "regular")
+    ].copy()
+
+    # Prefer playoff data; fall back to regular for players with no playoff rows
+    combined = pd.concat([po, reg]).drop_duplicates(subset="playerId", keep="first")
+    combined = combined[combined["team"].isin(teams)].copy()
+    combined = combined[combined["position"] != "G"]
+
+    if combined.empty:
+        return pd.DataFrame()
+
+    combined["xg_per_game"] = np.where(
+        combined["games_played"] > 0,
+        combined["I_F_xGoals"] / combined["games_played"],
+        0,
+    )
+    combined["p_score"] = combined["xg_per_game"].apply(
+        lambda xg: (1 - math.exp(-max(float(xg), 0))) * 100
+    )
+
+    combined["rank"] = (
+        combined.groupby("team")["p_score"]
+        .rank(ascending=False, method="min")
+        .astype(int)
+    )
+
+    out = combined[["rank", "name", "team", "position",
+                    "p_score", "xg_per_game", "games_played", "I_F_goals"]].copy()
+    out.columns = ["rank", "name", "teamAbbrev", "position",
+                   "p_score", "xg_per_game", "games_played", "goals"]
+
+    return out.sort_values(["teamAbbrev", "rank"]).reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
