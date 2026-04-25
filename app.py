@@ -2,12 +2,14 @@
 app.py — Playoff OT Goal Scorer Predictor (Streamlit web app)
 
 Run locally:   streamlit run app.py
-Deploy:        push to GitHub → share.streamlit.io → connect repo → deploy
+Deploy:        push to GitHub -> share.streamlit.io -> connect repo -> deploy
 """
 
+import csv
 import streamlit as st
 import pandas as pd
 from datetime import date
+from pathlib import Path
 
 import fetch_data
 import features as feat
@@ -27,6 +29,75 @@ st.caption("Ranks players by likelihood of scoring in sudden-death playoff overt
 
 CURRENT_SEASON = 2024
 DEFAULT_SEASONS = [2022, 2023, 2024]
+
+# ---------------------------------------------------------------------------
+# Helper functions (must be defined before sidebar references them)
+# ---------------------------------------------------------------------------
+
+def _log_result_sidebar(gid: int, scorer: str):
+    log_path = Path("data/pick_log.csv")
+    log_path.parent.mkdir(exist_ok=True)
+    fields = ["date", "game_id", "home", "away", "top3_home", "top3_away",
+              "actual_scorer", "in_top3"]
+
+    top3 = st.session_state.get("last_top3", {})
+    teams = st.session_state.get("last_teams", ["", ""])
+    all_names = [n for picks in top3.values() for n in picks]
+    in_top3 = int(scorer.lower() in [n.lower() for n in all_names])
+
+    row = {
+        "date": date.today().isoformat(),
+        "game_id": gid,
+        "home": teams[0] if teams else "",
+        "away": teams[1] if len(teams) > 1 else "",
+        "top3_home": ";".join(top3.get(teams[0], []) if teams else []),
+        "top3_away": ";".join(top3.get(teams[1], []) if len(teams) > 1 else []),
+        "actual_scorer": scorer,
+        "in_top3": in_top3,
+    }
+
+    write_header = not log_path.exists()
+    with open(log_path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
+
+    label = "HIT" if in_top3 else "miss"
+    st.sidebar.success(f"Logged: {scorer} [{label}]")
+
+
+def _show_log_summary():
+    log_path = Path("data/pick_log.csv")
+    if not log_path.exists():
+        st.sidebar.info("No pick log yet.")
+        return
+    df = pd.read_csv(log_path)
+    total = len(df)
+    hits = int(df["in_top3"].sum())
+    st.sidebar.metric("Top-3 hit rate", f"{100*hits/total:.1f}%", f"{hits}/{total} games")
+
+
+def _build_season_only_ingame(mp: pd.DataFrame, teams: list, season: int) -> pd.DataFrame:
+    reg = mp[(mp["season"] == season) & (mp["game_type"] == "regular")].copy()
+    po  = mp[(mp["season"] == season) & (mp["game_type"] == "playoffs")].copy()
+    src = pd.concat([po, reg]).drop_duplicates(subset="playerId", keep="first")
+    if "team" not in src.columns:
+        return pd.DataFrame()
+    src = src[src["team"].isin(teams)]
+    src = src[src["position"] != "G"]
+    rows = []
+    for _, r in src.iterrows():
+        rows.append({
+            "playerId": str(r["playerId"]),
+            "name": r.get("name", str(r["playerId"])),
+            "teamAbbrev": r["team"],
+            "position": r.get("position", ""),
+            "toi": r.get("icetime", 0) / max(r.get("games_played", 1), 1),
+            "shots": 0, "goals": 0, "assists": 0, "plusMinus": 0,
+        })
+    return pd.DataFrame(rows)
+
 
 # ---------------------------------------------------------------------------
 # Sidebar — settings
@@ -64,7 +135,7 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 
 @st.cache_data(show_spinner="Loading historical data from MoneyPuck...")
-def load_history(seasons: tuple[int, ...]) -> pd.DataFrame:
+def load_history(seasons: tuple) -> pd.DataFrame:
     return fetch_data.load_moneypuck_history(list(seasons))
 
 
@@ -102,6 +173,8 @@ game_id = None
 in_game = None
 goalie_stats = None
 series_stats = None
+home = ""
+away = ""
 
 if mode == "Auto-detect today's games":
     if st.button("Find today's playoff games"):
@@ -279,78 +352,3 @@ if run:
         for team in teams
     }
     st.session_state["last_teams"] = teams
-
-
-# ---------------------------------------------------------------------------
-# Helpers referenced in sidebar (defined after mp is loaded)
-# ---------------------------------------------------------------------------
-
-def _log_result_sidebar(gid: int, scorer: str):
-    import csv
-    from pathlib import Path
-
-    log_path = Path("data/pick_log.csv")
-    log_path.parent.mkdir(exist_ok=True)
-    fields = ["date", "game_id", "home", "away", "top3_home", "top3_away",
-              "actual_scorer", "in_top3"]
-
-    top3 = st.session_state.get("last_top3", {})
-    teams = st.session_state.get("last_teams", ["", ""])
-    all_names = [n for picks in top3.values() for n in picks]
-    in_top3 = int(scorer.lower() in [n.lower() for n in all_names])
-
-    row = {
-        "date": date.today().isoformat(),
-        "game_id": gid,
-        "home": teams[0] if teams else "",
-        "away": teams[1] if len(teams) > 1 else "",
-        "top3_home": ";".join(top3.get(teams[0], []) if teams else []),
-        "top3_away": ";".join(top3.get(teams[1], []) if len(teams) > 1 else []),
-        "actual_scorer": scorer,
-        "in_top3": in_top3,
-    }
-
-    write_header = not log_path.exists()
-    with open(log_path, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
-        if write_header:
-            writer.writeheader()
-        writer.writerow(row)
-
-    label = "HIT" if in_top3 else "miss"
-    st.sidebar.success(f"Logged: {scorer} [{label}]")
-
-
-def _show_log_summary():
-    from pathlib import Path
-    log_path = Path("data/pick_log.csv")
-    if not log_path.exists():
-        st.sidebar.info("No pick log yet.")
-        return
-    df = pd.read_csv(log_path)
-    total = len(df)
-    hits = int(df["in_top3"].sum())
-    st.sidebar.metric("Top-3 hit rate", f"{100*hits/total:.1f}%", f"{hits}/{total} games")
-
-
-def _build_season_only_ingame(
-    mp: pd.DataFrame, teams: list[str], season: int
-) -> pd.DataFrame:
-    reg = mp[(mp["season"] == season) & (mp["game_type"] == "regular")].copy()
-    po  = mp[(mp["season"] == season) & (mp["game_type"] == "playoffs")].copy()
-    src = pd.concat([po, reg]).drop_duplicates(subset="playerId", keep="first")
-    if "team" not in src.columns:
-        return pd.DataFrame()
-    src = src[src["team"].isin(teams)]
-    src = src[src["position"] != "G"]
-    rows = []
-    for _, r in src.iterrows():
-        rows.append({
-            "playerId": str(r["playerId"]),
-            "name": r.get("name", str(r["playerId"])),
-            "teamAbbrev": r["team"],
-            "position": r.get("position", ""),
-            "toi": r.get("icetime", 0) / max(r.get("games_played", 1), 1),
-            "shots": 0, "goals": 0, "assists": 0, "plusMinus": 0,
-        })
-    return pd.DataFrame(rows)
