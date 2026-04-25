@@ -115,17 +115,27 @@ def _parse_name(skater: dict, field: str) -> str:
 def parse_game_skater_stats(boxscore: dict) -> pd.DataFrame:
     """
     Extract per-skater in-game stats from a boxscore response.
-    Returns a DataFrame with columns:
-        playerId, name, teamAbbrev, position, toi, shots, goals, assists, plusMinus
+    Handles both the legacy (homeTeam.skaters) and current
+    (playerByGameStats.homeTeam.forwards/defense) NHL API formats.
     """
     rows = []
+    pbg = boxscore.get("playerByGameStats", {})
     for side in ("homeTeam", "awayTeam"):
-        team = boxscore.get(side, {})
-        abbrev = team.get("abbrev", "")
-        for skater in team.get("skaters", []):
+        abbrev = boxscore.get(side, {}).get("abbrev", "")
+        team_pbg = pbg.get(side, {})
+        skaters = team_pbg.get("forwards", []) + team_pbg.get("defense", [])
+        # Fallback to legacy format
+        if not skaters:
+            skaters = boxscore.get(side, {}).get("skaters", [])
+        for skater in skaters:
+            name_val = skater.get("name", "")
+            if isinstance(name_val, dict):
+                name = name_val.get("default", "")
+            else:
+                name = f"{_parse_name(skater, 'firstName')} {_parse_name(skater, 'lastName')}".strip()
             rows.append({
                 "playerId": skater.get("playerId"),
-                "name": f"{_parse_name(skater, 'firstName')} {_parse_name(skater, 'lastName')}".strip(),
+                "name": name,
                 "teamAbbrev": abbrev,
                 "position": skater.get("position") or skater.get("positionCode", ""),
                 "toi": _parse_toi(skater.get("toi", "0:00")),
@@ -236,10 +246,12 @@ def parse_goalie_stats(boxscore: dict) -> pd.DataFrame:
     Only includes goalies who actually played (toi > 0).
     """
     rows = []
+    pbg = boxscore.get("playerByGameStats", {})
     for side in ("homeTeam", "awayTeam"):
-        team = boxscore.get(side, {})
-        abbrev = team.get("abbrev", "")
-        for goalie in team.get("goalies", []):
+        abbrev = boxscore.get(side, {}).get("abbrev", "")
+        team_pbg = pbg.get(side, {})
+        goalies = team_pbg.get("goalies", []) or boxscore.get(side, {}).get("goalies", [])
+        for goalie in goalies:
             toi = _parse_toi(goalie.get("toi", "0:00"))
             if toi == 0:
                 continue
@@ -248,8 +260,8 @@ def parse_goalie_stats(boxscore: dict) -> pd.DataFrame:
             rows.append({
                 "teamAbbrev": abbrev,
                 "playerId": goalie.get("playerId"),
-                "name": f"{goalie.get('firstName', {}).get('default', '')} "
-                        f"{goalie.get('lastName', {}).get('default', '')}".strip(),
+                "name": goalie.get("name", {}).get("default", "") or
+                        f"{_parse_name(goalie, 'firstName')} {_parse_name(goalie, 'lastName')}".strip(),
                 "toi": toi,
                 "shots_against": shots_against,
                 "saves": saves,
