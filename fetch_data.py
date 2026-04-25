@@ -32,7 +32,17 @@ def fetch_moneypuck_skaters(season: int, game_type: str = "playoffs") -> pd.Data
 
     url = f"{MONEYPUCK_BASE}/{season}/{game_type}/skaters.csv"
     print(f"  [download] {url}")
-    df = pd.read_csv(url)
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+    resp = requests.get(url, headers=headers, timeout=30)
+    resp.raise_for_status()
+    from io import StringIO
+    df = pd.read_csv(StringIO(resp.text))
     df.to_csv(cache, index=False)
     return df
 
