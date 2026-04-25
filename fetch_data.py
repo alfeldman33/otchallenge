@@ -102,11 +102,21 @@ def fetch_play_by_play(game_id: int) -> dict:
     return _get(f"/gamecenter/{game_id}/play-by-play")
 
 
+_SKATER_COLS = ["playerId", "name", "teamAbbrev", "position", "toi", "shots", "goals", "assists", "plusMinus"]
+
+
+def _parse_name(skater: dict, field: str) -> str:
+    val = skater.get(field, "")
+    if isinstance(val, dict):
+        return val.get("default", "")
+    return str(val) if val else ""
+
+
 def parse_game_skater_stats(boxscore: dict) -> pd.DataFrame:
     """
     Extract per-skater in-game stats from a boxscore response.
     Returns a DataFrame with columns:
-        playerId, name, teamAbbrev, toi, shots, goals, assists, plusMinus
+        playerId, name, teamAbbrev, position, toi, shots, goals, assists, plusMinus
     """
     rows = []
     for side in ("homeTeam", "awayTeam"):
@@ -115,16 +125,17 @@ def parse_game_skater_stats(boxscore: dict) -> pd.DataFrame:
         for skater in team.get("skaters", []):
             rows.append({
                 "playerId": skater.get("playerId"),
-                "name": f"{skater.get('firstName', {}).get('default', '')} "
-                        f"{skater.get('lastName', {}).get('default', '')}".strip(),
+                "name": f"{_parse_name(skater, 'firstName')} {_parse_name(skater, 'lastName')}".strip(),
                 "teamAbbrev": abbrev,
-                "position": skater.get("position", ""),
+                "position": skater.get("position") or skater.get("positionCode", ""),
                 "toi": _parse_toi(skater.get("toi", "0:00")),
                 "shots": skater.get("sog", 0),
                 "goals": skater.get("goals", 0),
                 "assists": skater.get("assists", 0),
                 "plusMinus": skater.get("plusMinus", 0),
             })
+    if not rows:
+        return pd.DataFrame(columns=_SKATER_COLS)
     return pd.DataFrame(rows)
 
 
@@ -194,6 +205,10 @@ def fetch_series_skater_stats(game_id: int) -> pd.DataFrame:
         return pd.DataFrame()
 
     all_games = pd.concat(frames, ignore_index=True)
+    required = ["playerId", "name", "teamAbbrev", "position", "shots", "goals", "toi"]
+    if not all(c in all_games.columns for c in required) or all_games.empty:
+        return pd.DataFrame()
+
     agg = (
         all_games.groupby(["playerId", "name", "teamAbbrev", "position"], as_index=False)
         .agg(
