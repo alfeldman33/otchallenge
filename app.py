@@ -24,6 +24,8 @@ st.set_page_config(
     layout="wide",
 )
 
+page = st.sidebar.radio("Navigation", ["Predictor", "How It Works"], label_visibility="collapsed")
+
 st.title("🏒 Playoff OT Goal Scorer Predictor")
 st.caption("Ranks players by likelihood of scoring in sudden-death playoff overtime.")
 
@@ -155,6 +157,65 @@ if mp.empty:
         "This can happen if the site is blocking automated requests from cloud servers. "
         "Try removing older seasons from the sidebar, or try again later."
     )
+    st.stop()
+
+# ---------------------------------------------------------------------------
+# How It Works page
+# ---------------------------------------------------------------------------
+
+if page == "How It Works":
+    st.header("How the Composite Score Works")
+    st.markdown("""
+The **OT Goal Prob** and **Full Game scorer** rankings are built from a weighted
+combination of seven metrics. Each metric is normalized 0–1 within each team
+before weighting, so no single stat dominates due to scale.
+""")
+
+    weights = {
+        "xG/60 — Current Playoffs": (0.25, "Expected goals per 60 minutes in this postseason. Highest-weight signal because it reflects current form against playoff-caliber opponents."),
+        "SOG/G — This Series": (0.22, "Shots on goal per game against this specific goalie in the current series. Strong signal for matchup-specific performance."),
+        "SOG — This Game": (0.15, "Shots on goal in tonight's game (available only after puck drop). Captures who is hot right now."),
+        "xG/60 — Career Playoffs": (0.15, "Career expected goals per 60 in all playoff games loaded. Identifies proven big-game performers."),
+        "xG/60 — Regular Season": (0.10, "Current regular season xG/60. Baseline skill level when playoff sample is small."),
+        "TOI Share — This Game": (0.08, "Player's fraction of their team's total ice time tonight. Measures coach trust and deployment."),
+        "Career Playoff Sh%": (0.05, "Career shooting percentage in playoffs. Small bonus for proven finishers."),
+    }
+
+    for metric, (weight, desc) in weights.items():
+        pct = int(weight * 100)
+        st.markdown(f"### {metric} — **{pct}%**")
+        st.progress(weight)
+        st.caption(desc)
+        st.divider()
+
+    st.header("OT Goal Probability (1–100)")
+    st.markdown("""
+The **OT Goal Prob** score is an absolute probability — not a relative ranking.
+It uses a **Poisson model**: given a player's best available xG/60, we compute
+the expected goals they'd generate in a 20-minute OT period, then calculate
+the probability of scoring at least one goal.
+
+```
+expected_ot_xg = xG/60 × (20 / 60)
+P(score) = 1 − e^(−expected_ot_xg) × 100
+```
+
+**xG source priority:** current playoff season → career playoffs → regular season.
+Players with fewer than 3 playoff games fall back to career or regular season data.
+""")
+
+    st.header("Full Game Scorer Probability")
+    st.markdown("""
+Same Poisson model, but scaled to a full 60-minute game using the player's
+average xG per game from MoneyPuck:
+
+```
+P(score) = 1 − e^(−xG_per_game) × 100
+```
+
+This is an **absolute probability**, not relative to teammates.
+A value of 20 means the model estimates a 20% chance that player scores tonight.
+""")
     st.stop()
 
 # ---------------------------------------------------------------------------
