@@ -310,7 +310,7 @@ if run:
                     "#": team_df["rank"],
                     "Player": team_df["name"],
                     "Pos": team_df["position"],
-                    "Score": team_df["score"].map("{:.3f}".format),
+                    "OT Goal Prob": team_df["p_ot"].map("{:.1f}".format),
                     "SOG (game)": team_df["shots_in_game"].astype(int),
                     "xG/60 (cur PO)": team_df["xg_per60_current_playoffs"].map("{:.2f}".format),
                 }
@@ -323,8 +323,8 @@ if run:
                 st.dataframe(pd.DataFrame(display_cols), hide_index=True, use_container_width=True)
 
         st.caption(
-            "Score is a weighted composite normalized 0-1 per team. "
-            "Top pick is the model's best candidate, not a guarantee."
+            "OT Goal Prob: Poisson probability of scoring in a 20-min OT period (0-100 scale). "
+            "Based on best available xG/60 — current playoffs, career playoffs, or regular season."
         )
 
     # ---- Tab 2: Full Game Scorer -----------------------------------------

@@ -158,12 +158,21 @@ def build_player_features(
         weights[col] * df[f"norm_{col}"] for col in feature_cols
     )
 
-    # ---- 8. Rank within each team (1 = best) ----------------------------
+    # ---- 8. OT goal probability (Poisson, 1-100 scale) ------------------
+    # Use best available xG/60: current playoffs > career playoffs > reg season
+    xg = df["xg_per60_current_playoffs"].where(df["cur_po_gp"] >= MIN_PLAYOFF_GP, 0)
+    xg = xg.where(xg > 0, df["xg_per60_career_playoffs"])
+    xg = xg.where(xg > 0, df["xg_per60_reg_season"])
+    # Expected xG in a 20-minute OT period
+    df["p_ot"] = (1 - np.exp(-(xg * (20 / 60)).clip(lower=0))) * 100
+    df["p_ot"] = df["p_ot"].round(1)
+
+    # ---- 9. Rank within each team (1 = best) ----------------------------
     df["rank"] = df.groupby("teamAbbrev")["score"].rank(ascending=False, method="min").astype(int)
 
     output_cols = [
         "rank", "name", "teamAbbrev", "position",
-        "score",
+        "score", "p_ot",
         "xg_per60_current_playoffs",
         "shots_per_game_series",
         "series_games",
